@@ -10,16 +10,16 @@ import re
 import os
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="⚽ Betting Dashboard V37", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="⚽ Dashboard Betting V36 Fix", layout="wide", page_icon="⚽")
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # --- TITOLO ---
-st.title("💎 Dashboard Analisi & Valore V37")
-st.markdown("**Focus: 1X2 e Over/Under 2.5**")
+st.title("💎 Dashboard Analisi & Valore V36")
+st.markdown("**Analisi Tattica + Caccia al Valore (Bookmaker vs Poisson)**")
 st.divider()
 
 # ==========================================
-# 1. CARICAMENTO DATI & INPUT QUOTE
+# 1. CARICAMENTO DATI (SIDEBAR)
 # ==========================================
 with st.sidebar:
     st.header("📂 1. Dati")
@@ -38,15 +38,15 @@ with st.sidebar:
     st.header("💰 2. Quote Bookmaker")
     
     st.subheader("Esito Finale (1X2)")
-    c1, c2, c3 = st.columns(3)
-    q_1 = c1.number_input("1", value=1.00, step=0.01, format="%.2f")
-    q_x = c2.number_input("X", value=1.00, step=0.01, format="%.2f")
-    q_2 = c3.number_input("2", value=1.00, step=0.01, format="%.2f")
+    col_b1, col_b2, col_b3 = st.columns(3)
+    q_1 = col_b1.number_input("1", value=1.00, step=0.01, format="%.2f")
+    q_x = col_b2.number_input("X", value=1.00, step=0.01, format="%.2f")
+    q_2 = col_b3.number_input("2", value=1.00, step=0.01, format="%.2f")
     
     st.subheader("Totale Gol (O/U 2.5)")
-    c4, c5 = st.columns(2)
-    q_over25 = c4.number_input("Over 2.5", value=1.00, step=0.01, format="%.2f")
-    q_under25 = c5.number_input("Under 2.5", value=1.00, step=0.01, format="%.2f")
+    col_bu1, col_bu2 = st.columns(2)
+    q_over25 = col_bu1.number_input("Over 2.5", value=1.00, step=0.01, format="%.2f")
+    q_under25 = col_bu2.number_input("Under 2.5", value=1.00, step=0.01, format="%.2f")
     
     st.divider()
     w_cassa = st.number_input("Cassa Totale (€)", value=1000.0, step=10.0)
@@ -240,7 +240,7 @@ if st.button("🚀 CALCOLA VALORE", type="primary"):
     col_a, col_b, col_c = st.columns(3)
     with col_a: show_card(f"Vittoria {sel_home} (1)", p1, q_1)
     with col_b: show_card("Pareggio (X)", px, q_x)
-    with c_c: show_card(f"Vittoria {sel_away} (2)", p2, q_2)
+    with col_c: show_card(f"Vittoria {sel_away} (2)", p2, q_2)
     
     col_d, col_e = st.columns(2)
     with col_d: show_card("Over 2.5 Gol", po25, q_over25)
