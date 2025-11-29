@@ -10,87 +10,70 @@ import re
 import os
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="⚽ Dashboard Pro V42", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="⚽ Dashboard V43 (Poisson Pro)", layout="wide", page_icon="⚽")
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # --- TITOLO ---
-st.title("💎 Dashboard Analisi Calcio V42 (Full + ELO Manuale)")
-st.markdown("**Statistiche, Poisson, ELO User vs Storico, Ritmi & Money Management**")
+st.title("💎 Dashboard Analisi V43")
+st.markdown("**Poisson 1X2 • Money Management • Analisi Ritmo Gol**")
 st.divider()
 
 # ==========================================
-# 1. SIDEBAR: DATI & INPUT UTENTE
+# 1. SIDEBAR: DATI & INPUT
 # ==========================================
 with st.sidebar:
     st.header("📂 1. Dati")
     uploaded_file = st.file_uploader("Carica file (CSV/Excel)", type=['csv', 'xlsx'])
     
-    default_file = 'eng_tot_1.csv'
-    file_to_use = uploaded_file if uploaded_file else (default_file if os.path.exists(default_file) else None)
-
-    if file_to_use is None:
-        st.warning("Carica un file per iniziare.")
-        st.stop()
+    default_file = 'eng_tot.xlsx - eng_tot.csv'
+    # Cerca file di default nella cartella se non caricato
+    if uploaded_file is None:
+        possible_files = [f for f in os.listdir() if 'eng_tot' in f or 'CGM' in f]
+        if possible_files:
+            default_file = possible_files[0]
 
     st.divider()
     
-    # SEZIONE ELO MANUALE (NUOVO)
-    st.header("👑 2. ELO Rating (Manuale)")
-    st.caption("Inserisci l'ELO attuale delle squadre per il confronto:")
-    col_elo1, col_elo2 = st.columns(2)
-    user_elo_h = col_elo1.number_input("ELO Casa", value=1500, step=10)
-    user_elo_a = col_elo2.number_input("ELO Ospite", value=1500, step=10)
-
-    st.divider()
-
     # SEZIONE QUOTE (MONEY MANAGEMENT)
-    st.header("💰 3. Quote Bookmaker")
+    st.header("💰 2. Quote Bookmaker")
+    st.caption("Inserisci le quote per calcolare il valore:")
     
-    col_b1, col_b2, col_b3 = st.columns(3)
-    q_1 = col_b1.number_input("1", value=1.00, step=0.01, format="%.2f")
-    q_x = col_b2.number_input("X", value=1.00, step=0.01, format="%.2f")
-    q_2 = col_b3.number_input("2", value=1.00, step=0.01, format="%.2f")
+    c_q1, c_qx, c_q2 = st.columns(3)
+    q_1 = c_q1.number_input("1", value=1.00, step=0.01, format="%.2f")
+    q_x = c_qx.number_input("X", value=1.00, step=0.01, format="%.2f")
+    q_2 = c_q2.number_input("2", value=1.00, step=0.01, format="%.2f")
     
-    col_bu1, col_bu2 = st.columns(2)
-    q_over25 = col_bu1.number_input("Over 2.5", value=1.00, step=0.01, format="%.2f")
-    q_under25 = col_bu2.number_input("Under 2.5", value=1.00, step=0.01, format="%.2f")
-
+    c_ou1, c_ou2 = st.columns(2)
+    q_over25 = c_ou1.number_input("Over 2.5", value=1.00, step=0.01, format="%.2f")
+    q_under25 = c_ou2.number_input("Under 2.5", value=1.00, step=0.01, format="%.2f")
+    
     st.divider()
     w_cassa = st.number_input("Cassa Totale (€)", value=1000.0, step=10.0)
-    w_soglia_trappola = st.slider("Soglia Allarme Trappola (%)", 10, 100, 30, 5)
 
 @st.cache_data
-def load_data(file_input, is_path=False):
+def load_data(file_input):
     try:
-        if is_path:
-             with open(file_input, 'r', encoding='latin1', errors='replace') as f:
+        # Logica di caricamento file (Path o Buffer)
+        if isinstance(file_input, str): # Se è un percorso file
+            with open(file_input, 'r', encoding='latin1', errors='replace') as f:
                 line = f.readline()
                 sep = ';' if line.count(';') > line.count(',') else ','
-             df = pd.read_csv(file_input, sep=sep, encoding='latin1', on_bad_lines='skip', low_memory=False, header=None)
-        else:
+            df = pd.read_csv(file_input, sep=sep, encoding='latin1', on_bad_lines='skip', low_memory=False)
+        else: # Se è un file caricato
             try:
                 line = file_input.readline().decode('latin1')
                 file_input.seek(0)
                 sep = ';' if line.count(';') > line.count(',') else ','
-                df = pd.read_csv(file_input, sep=sep, encoding='latin1', on_bad_lines='skip', low_memory=False, header=None)
+                df = pd.read_csv(file_input, sep=sep, encoding='latin1', on_bad_lines='skip', low_memory=False)
             except:
                 file_input.seek(0)
-                df = pd.read_excel(file_input, header=None)
+                df = pd.read_excel(file_input)
 
-        header = df.iloc[0].astype(str).str.strip().str.upper().tolist()
-        seen = {}
-        unique_header = []
-        for col in header:
-            if col in seen:
-                seen[col] += 1
-                unique_header.append(f"{col}.{seen[col]}")
-            else:
-                seen[col] = 0
-                unique_header.append(col)
-        df = df.iloc[1:].copy()
-        df.columns = unique_header
+        # Pulizia Nomi Colonne
+        df.columns = df.columns.astype(str).str.strip().str.upper()
+        df = df.loc[:, ~df.columns.duplicated()]
         
-        # Mappatura Completa (ELO incluso)
+        # Mappatura Universale
         col_map = {
             'GOALMINH': ['GOALMINH', 'GOALMINCASA', 'MINUTI_CASA', 'GOALSH'],
             'GOALMINA': ['GOALMINA', 'GOALMINOSPITE', 'MINUTI_OSPITE', 'GOALSA'],
@@ -98,18 +81,18 @@ def load_data(file_input, is_path=False):
             'PAESE': ['PAESE', 'COUNTRY'],
             'CASA': ['CASA', 'HOME', 'TXTECHIPA1'],
             'OSPITE': ['OSPITE', 'AWAY', 'TXTECHIPA2'],
-            'ELO_H': ['ELOHOMEO', 'ELO_HOME', 'ELO1'],
-            'ELO_A': ['ELOAWAYO', 'ELO_AWAY', 'ELO2']
+            'ELO_H': ['ELOHOMEO', 'ELO_HOME'],
+            'ELO_A': ['ELOAWAYO', 'ELO_AWAY']
         }
         
         for target, candidates in col_map.items():
             if target not in df.columns:
                 for candidate in candidates:
-                    found = next((c for c in df.columns if c == candidate), None)
-                    if found:
-                        df.rename(columns={found: target}, inplace=True)
+                    if candidate in df.columns:
+                        df.rename(columns={candidate: target}, inplace=True)
                         break
-        
+
+        # Pulizia Celle
         for c in ['PAESE', 'LEGA', 'CASA', 'OSPITE']:
             if c in df.columns: df[c] = df[c].astype(str).str.strip()
 
@@ -122,17 +105,19 @@ def load_data(file_input, is_path=False):
     except Exception as e:
         return pd.DataFrame()
 
-is_path = isinstance(file_to_use, str)
-df = load_data(file_to_use, is_path)
+# Caricamento effettivo
+if uploaded_file:
+    df = load_data(uploaded_file)
+elif os.path.exists(default_file):
+    df = load_data(default_file)
+else:
+    st.stop() # Aspetta caricamento
 
 if df.empty:
     st.error("File non valido.")
     st.stop()
 
 st.sidebar.success(f"✅ {len(df)} righe caricate")
-
-# Check ELO nel file
-has_elo_file = 'ELO_H' in df.columns and 'ELO_A' in df.columns
 
 # ==========================================
 # 2. SELEZIONE MATCH
@@ -150,7 +135,7 @@ with col3: sel_away = st.selectbox("✈️ Ospite", teams, index=1 if len(teams)
 # ==========================================
 # 3. ENGINE DI ANALISI
 # ==========================================
-if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
+if st.button("🚀 AVVIA ANALISI", type="primary"):
     st.divider()
     
     intervals = ['0-15', '16-30', '31-45', '46-60', '61-75', '76-90']
@@ -175,45 +160,34 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
     goals_a = {'FT': 0, 'HT': 0, 'S_FT': 0, 'S_HT': 0}
     match_h, match_a = 0, 0
     
-    # Liste Minuti per KM e Media 1° Gol
-    times_h_all, times_a_all = [], [] # Tutti i gol
-    first_goal_h, first_goal_a = [], [] # Solo il primo gol per partita
-    times_league = []
+    # Liste per Grafici
+    times_h, times_a, times_league = [], [], []
+    first_goal_h, first_goal_a = [], []
     
-    # Dati per Heatmap
+    # Heatmap Data
     stats_match = {
         sel_home: {'F': {i:0 for i in intervals}, 'S': {i:0 for i in intervals}},
         sel_away: {'F': {i:0 for i in intervals}, 'S': {i:0 for i in intervals}}
     }
-    
-    # Dati Elo Storico (Media)
-    hist_elo_h = []
-    hist_elo_a = []
 
     for _, row in df_league.iterrows():
         h, a = row['CASA'], row['OSPITE']
         min_h = get_minutes(row.get(c_h))
         min_a = get_minutes(row.get(c_a))
         
-        # ELO Storico
-        if has_elo_file:
-            if h == sel_home: hist_elo_h.append(float(row['ELO_H']))
-            if a == sel_away: hist_elo_a.append(float(row['ELO_A']))
-
-        # Media Lega (1° gol)
         if min_h: times_league.append(min(min_h))
         if min_a: times_league.append(min(min_a))
 
-        # --- Stats Squadra CASA ---
+        # Stats Casa
         if h == sel_home:
             match_h += 1
             goals_h['FT'] += len(min_h)
             goals_h['HT'] += len([x for x in min_h if x <= 45])
             goals_h['S_FT'] += len(min_a)
             goals_h['S_HT'] += len([x for x in min_a if x <= 45])
-            
-            times_h_all.extend(min_h)
-            if min_h: first_goal_h.append(min(min_h))
+            if min_h: 
+                times_h.extend(min_h)
+                first_goal_h.append(min(min_h))
             
             # Heatmap
             for m in min_h:
@@ -223,16 +197,16 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
                 idx = min(5, (m-1)//15); idx = 3 if (m>45 and m<=60 and idx<3) else idx
                 stats_match[h]['S'][intervals[idx]] += 1
 
-        # --- Stats Squadra OSPITE ---
+        # Stats Ospite
         if a == sel_away:
             match_a += 1
             goals_a['FT'] += len(min_a)
             goals_a['HT'] += len([x for x in min_a if x <= 45])
             goals_a['S_FT'] += len(min_h)
             goals_a['S_HT'] += len([x for x in min_h if x <= 45])
-            
-            times_a_all.extend(min_a)
-            if min_a: first_goal_a.append(min(min_a))
+            if min_a: 
+                times_a.extend(min_a)
+                first_goal_a.append(min(min_a))
 
             # Heatmap
             for m in min_a:
@@ -242,54 +216,32 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
                 idx = min(5, (m-1)//15); idx = 3 if (m>45 and m<=60 and idx<3) else idx
                 stats_match[a]['S'][intervals[idx]] += 1
 
+    # --- CALCOLI MEDIE ---
     def safe_div(n, d): return n / d if d > 0 else 0
-    def safe_mean(lst): return np.mean(lst) if lst else 0
-
-    # Medie
+    
     avg_h_ft = safe_div(goals_h['FT'], match_h)
     avg_h_ht = safe_div(goals_h['HT'], match_h)
     avg_h_conc_ft = safe_div(goals_h['S_FT'], match_h)
     avg_h_conc_ht = safe_div(goals_h['S_HT'], match_h)
-    avg_min_h = safe_mean(first_goal_h) # Minuto medio 1° gol
 
     avg_a_ft = safe_div(goals_a['FT'], match_a)
     avg_a_ht = safe_div(goals_a['HT'], match_a)
     avg_a_conc_ft = safe_div(goals_a['S_FT'], match_a)
     avg_a_conc_ht = safe_div(goals_a['S_HT'], match_a)
-    avg_min_a = safe_mean(first_goal_a) # Minuto medio 1° gol
 
-    # --- 4. VISUALIZZAZIONE DATI ---
-    
-    # A. Statistiche Medie (Con Minuto 1° Gol ripristinato!)
-    st.subheader("📊 Statistiche & Ritmi")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.info(f"**🏠 {sel_home}** ({match_h} match)")
-        st.write(f"⏱️ Minuto medio 1° Gol: **{int(avg_min_h)}'**")
-        st.write(f"**1°T:** {avg_h_ht:.2f} F / {avg_h_conc_ht:.2f} S")
-        st.write(f"**FIN:** {avg_h_ft:.2f} F / {avg_h_conc_ft:.2f} S")
-    with c2:
-        st.warning(f"**✈️ {sel_away}** ({match_a} match)")
-        st.write(f"⏱️ Minuto medio 1° Gol: **{int(avg_min_a)}'**")
-        st.write(f"**1°T:** {avg_a_ht:.2f} F / {avg_a_conc_ht:.2f} S")
-        st.write(f"**FIN:** {avg_a_ft:.2f} F / {avg_a_conc_ft:.2f} S")
+    # --- POISSON ---
+    # Lambda FT
+    lam_h_ft = (avg_h_ft + avg_a_conc_ft) / 2
+    lam_a_ft = (avg_a_ft + avg_h_conc_ft) / 2
+    # Lambda HT
+    lam_h_ht = (avg_h_ht + avg_a_conc_ht) / 2
+    lam_a_ht = (avg_a_ht + avg_h_conc_ht) / 2
 
-    st.divider()
-
-    # --- 5. ANALISI ELO & POISSON ---
-    st.subheader("⚖️ Confronto Modelli: Poisson vs ELO")
-
-    # Poisson
-    exp_h = (avg_h_ft + avg_a_conc_ft) / 2
-    exp_a = (avg_a_ft + avg_h_conc_ft) / 2
-    exp_h_ht = (avg_h_ht + avg_a_conc_ht) / 2
-    exp_a_ht = (avg_a_ht + avg_h_conc_ht) / 2
-
-    def calc_poisson_probs(lam_h, lam_a):
+    def calc_poisson_probs(lh, la):
         probs = np.zeros((6, 6))
         for i in range(6):
             for j in range(6):
-                probs[i][j] = poisson.pmf(i, lam_h) * poisson.pmf(j, lam_a)
+                probs[i][j] = poisson.pmf(i, lh) * poisson.pmf(j, la)
         p1 = np.sum(np.tril(probs, -1))
         px = np.sum(np.diag(probs))
         p2 = np.sum(np.triu(probs, 1))
@@ -299,57 +251,19 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
                 if i+j <= 2: pu25 += probs[i][j]
         return p1, px, p2, pu25
 
-    p1_ft, px_ft, p2_ft, pu25_ft = calc_poisson_probs(exp_h, exp_a)
+    p1_ft, px_ft, p2_ft, pu25_ft = calc_poisson_probs(lam_h_ft, lam_a_ft)
+    p1_ht, px_ht, p2_ht, _ = calc_poisson_probs(lam_h_ht, lam_a_ht)
     
     # HT Specifics
-    prob_00_ht = poisson.pmf(0, exp_h_ht) * poisson.pmf(0, exp_a_ht)
-    prob_u15_ht = prob_00_ht + (poisson.pmf(1, exp_h_ht) * poisson.pmf(0, exp_a_ht)) + (poisson.pmf(0, exp_h_ht) * poisson.pmf(1, exp_a_ht))
+    p_00_ht = poisson.pmf(0, lam_h_ht) * poisson.pmf(0, lam_a_ht)
+    p_u15_ht = p_00_ht + (poisson.pmf(1, lam_h_ht) * poisson.pmf(0, lam_a_ht)) + (poisson.pmf(0, lam_h_ht) * poisson.pmf(1, lam_a_ht))
 
-    # ELO Calculation
-    HOME_ADVANTAGE = 100
-    dr = (user_elo_h + HOME_ADVANTAGE) - user_elo_a
-    prob_elo_h = 1 / (1 + 10 ** (-dr / 400))
-    prob_elo_a = 1 - prob_elo_h
-    
-    # Tabella Confronto
-    col_mod1, col_mod2, col_mod3 = st.columns(3)
-    
     def to_odd(p): return round(1/p, 2) if p > 0 else 99.00
 
-    with col_mod1:
-        st.markdown("#### 🎲 Poisson (Forma)")
-        st.write(f"1: **{p1_ft*100:.1f}%** (@{to_odd(p1_ft)})")
-        st.write(f"2: **{p2_ft*100:.1f}%** (@{to_odd(p2_ft)})")
-        st.caption(f"0-0 HT: {prob_00_ht*100:.1f}%")
+    # --- VISUALIZZAZIONE PREVISIONI ---
+    st.subheader("🎲 PREVISIONI & VALORE")
     
-    with col_mod2:
-        st.markdown("#### 👑 ELO User (Forza)")
-        st.write(f"1: **{prob_elo_h*100:.1f}%** (@{to_odd(prob_elo_h)})")
-        st.write(f"2: **{prob_elo_a*100:.1f}%** (@{to_odd(prob_elo_a)})")
-        st.caption(f"Delta ELO: {user_elo_h - user_elo_a}")
-
-    with col_mod3:
-        st.markdown("#### 📜 ELO Storico (File)")
-        if has_elo_file:
-            avg_hist_h = safe_mean(hist_elo_h)
-            avg_hist_a = safe_mean(hist_elo_a)
-            st.write(f"Media Casa: {int(avg_hist_h)}")
-            st.write(f"Media Ospite: {int(avg_hist_a)}")
-            
-            # Check coerenza
-            diff_user = user_elo_h - user_elo_a
-            diff_hist = avg_hist_h - avg_hist_a
-            if abs(diff_user - diff_hist) > 100:
-                st.error("⚠️ L'ELO inserito diverge molto dallo storico!")
-            else:
-                st.success("✅ ELO inserito coerente con storico.")
-        else:
-            st.write("Dati storici non disponibili.")
-
-    # --- MONEY MANAGEMENT ---
-    st.divider()
-    st.subheader("💰 Caccia al Valore (Money Management)")
-    
+    # Kelly Criterion
     def calc_kelly(prob, quota, bankroll):
         if prob <= 0 or quota <= 1: return 0, 0
         b = quota - 1
@@ -357,88 +271,85 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
         stake_pct = max(0, f * 0.3)
         return stake_pct * 100, bankroll * stake_pct
 
-    # Usiamo una media ponderata tra Poisson ed ELO per il calcolo valore?
-    # Per ora usiamo Poisson che è più reattivo alla forma recente per il betting
-    
-    quotes = {'1': q_1, 'X': q_x, '2': q_2, 'O 2.5': q_over25, 'U 2.5': q_under25}
-    probs_real = {'1': p1_ft, 'X': px_ft, '2': p2_ft, 'O 2.5': 1-pu25_ft, 'U 2.5': pu25_ft}
-    
-    cols = st.columns(3)
-    for i, (segno, quota) in enumerate(quotes.items()):
-        if quota > 1.0:
-            prob = probs_real.get(segno, 0)
-            valore = (prob * quota) - 1
-            
-            # Filtro Trappola
-            fair = to_odd(prob)
-            diff_pct = (quota - fair) / fair if fair > 0 else 0
-            trappola = diff_pct > (w_soglia_trappola / 100.0)
-            
-            with cols[i % 3]:
-                color = "green" if (valore > 0 and not trappola) else "red"
-                icon = "✅ VALUE" if (valore > 0 and not trappola) else "⚠️ TRAP" if trappola else "❌ NO"
-                
-                st.markdown(f"""
-                <div style="border:1px solid #555; padding:10px; border-radius:5px; margin-bottom:10px;">
-                    <strong>{segno}</strong> (Q: {quota:.2f})<br>
-                    Fair: <b>{fair:.2f}</b> | Prob: {prob*100:.1f}%<br>
-                    <span style="color:{color}; font-weight:bold;">{icon}</span>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if valore > 0 and not trappola:
-                    pct, eur = calc_kelly(prob, quota, w_cassa)
-                    st.caption(f"Punta: € {eur:.2f} ({pct:.1f}%)")
+    # Card Valore
+    def show_value_card(label, prob, quota_book):
+        odd_real = to_odd(prob)
+        valore = (prob * quota_book) - 1
+        pct, eur = calc_kelly(prob, quota_book, w_cassa)
+        
+        color = "green" if valore > 0 else "red"
+        icon = "✅ VALUE" if valore > 0 else "❌ NO VALUE"
+        
+        st.markdown(f"""
+        <div style="border:1px solid #444; padding:10px; border-radius:8px; margin-bottom:10px;">
+            <strong>{label}</strong><br>
+            Prob: <b>{prob*100:.1f}%</b> (Fair: {odd_real})<br>
+            Book: <b>{quota_book:.2f}</b><br>
+            <span style="color:{color}; font-weight:bold;">{icon} ({valore*100:.1f}%)</span>
+            {f"<br><small style='color:#00FF00'>Punta: € {eur:.2f}</small>" if valore > 0 else ""}
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
+    c1, c2, c3 = st.columns(3)
+    with c1: show_value_card(f"Vittoria {sel_home}", p1_ft, q_1)
+    with c2: show_value_card("Pareggio", px_ft, q_x)
+    with c3: show_value_card(f"Vittoria {sel_away}", p2_ft, q_2)
+    
+    c4, c5, c6 = st.columns(3)
+    with c4: show_value_card("Over 2.5 FT", 1-pu25_ft, q_over25)
+    with c5: show_value_card("Under 2.5 FT", pu25_ft, q_under25)
+    with c6: 
+        st.markdown(f"""
+        <div style="border:1px solid #666; padding:10px; border-radius:8px;">
+            <strong>Speciale 1° Tempo</strong><br>
+            1 ({p1_ht*100:.0f}%) - X ({px_ht*100:.0f}%) - 2 ({p2_ht*100:.0f}%)<br>
+            0-0 HT: <b>{p_00_ht*100:.1f}%</b> (@{to_odd(p_00_ht)})<br>
+            U1.5 HT: <b>{p_u15_ht*100:.1f}%</b> (@{to_odd(p_u15_ht)})
+        </div>
+        """, unsafe_allow_html=True)
 
     # --- GRAFICI ---
-    tab1, tab2, tab3 = st.tabs(["📉 Ritmo Gol (KM)", "⚽ Heatmap Fatti", "🛡️ Heatmap Subiti"])
+    st.divider()
+    tab1, tab2 = st.tabs(["📉 Ritmo Gol (1° Gol)", "🔥 Densità Fatti/Subiti"])
 
     with tab1:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        kmf_h = KaplanMeierFitter()
-        kmf_a = KaplanMeierFitter()
-        
-        if first_goal_h and first_goal_a: # Uso i dati del primo gol salvati prima
-            kmf_h.fit(first_goal_h, label=f'{sel_home} (1° Gol)')
-            kmf_a.fit(first_goal_a, label=f'{sel_away} (1° Gol)')
+        if first_goal_h or first_goal_a:
+            fig, ax = plt.subplots(figsize=(10, 4))
+            kmf = KaplanMeierFitter()
             
-            kmf_h.plot_survival_function(ax=ax, ci_show=False, linewidth=3, color='blue')
-            kmf_a.plot_survival_function(ax=ax, ci_show=False, linewidth=3, color='red')
+            if first_goal_h:
+                kmf.fit(first_goal_h, label=f'{sel_home}')
+                kmf.plot_survival_function(ax=ax, ci_show=False, linewidth=3, color='blue')
+            if first_goal_a:
+                kmf.fit(first_goal_a, label=f'{sel_away}')
+                kmf.plot_survival_function(ax=ax, ci_show=False, linewidth=3, color='red')
             
-            # Media Lega
-            if times_league:
-                kmf_l = KaplanMeierFitter()
-                kmf_l.fit(times_league, label='Media Lega')
-                kmf_l.plot_survival_function(ax=ax, ci_show=False, linewidth=2, color='gray', linestyle='--')
-
-            plt.axhline(y=0.5, color='green', linestyle=':', label='Mediana (50%)')
-            plt.title('Tempo al 1° Gol (Probabilità 0-0)')
+            if len(times_league) > 5:
+                kmf.fit(times_league, label='Media Lega')
+                kmf.plot_survival_function(ax=ax, ci_show=False, linewidth=2, color='gray', linestyle='--')
+            
+            plt.title(f"Tempo al 1° Gol: {sel_home} (~{int(np.mean(first_goal_h)) if first_goal_h else 0}') vs {sel_away} (~{int(np.mean(first_goal_a)) if first_goal_a else 0}')")
+            plt.axhline(0.5, color='green', linestyle=':', label='50% Prob.')
             plt.grid(True, alpha=0.3)
-            plt.axvline(45, color='green', linestyle='--')
-            plt.legend()
             st.pyplot(fig)
         else:
-            st.warning("Dati insufficienti per il grafico KM.")
-
-    # Heatmaps
-    rows_f = []
-    rows_s = []
-    for t in [sel_home, sel_away]:
-        d = stats_match[t]
-        rows_f.append({**{'SQUADRA': t}, **d['F']})
-        rows_s.append({**{'SQUADRA': t}, **d['S']})
-    
-    df_f = pd.DataFrame(rows_f).set_index('SQUADRA')
-    df_s = pd.DataFrame(rows_s).set_index('SQUADRA')
+            st.warning("Dati insufficienti per Kaplan-Meier.")
 
     with tab2:
-        fig, ax = plt.subplots(figsize=(10, 3))
-        sns.heatmap(df_f[intervals], annot=True, cmap="Greens", fmt="d", cbar=False, ax=ax)
-        st.pyplot(fig)
+        rows_f = []
+        rows_s = []
+        for t in [sel_home, sel_away]:
+            d = stats_match[t]
+            rows_f.append({**{'SQUADRA': t}, **d['F']})
+            rows_s.append({**{'SQUADRA': t}, **d['S']})
+        
+        df_f = pd.DataFrame(rows_f).set_index('SQUADRA')
+        df_s = pd.DataFrame(rows_s).set_index('SQUADRA')
 
-    with tab3:
-        fig, ax = plt.subplots(figsize=(10, 3))
-        sns.heatmap(df_s[intervals], annot=True, cmap="Reds", fmt="d", cbar=False, ax=ax)
+        fig, axes = plt.subplots(2, 1, figsize=(10, 6))
+        sns.heatmap(df_f[intervals], annot=True, cmap="Greens", fmt="d", cbar=False, ax=axes[0])
+        axes[0].set_title('GOL FATTI')
+        sns.heatmap(df_s[intervals], annot=True, cmap="Reds", fmt="d", cbar=False, ax=axes[1])
+        axes[1].set_title('GOL SUBITI')
+        plt.tight_layout()
         st.pyplot(fig)
