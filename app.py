@@ -10,12 +10,12 @@ import re
 import os
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="⚽ Dashboard Pro V39", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="⚽ Dashboard Pro V41 (Full)", layout="wide", page_icon="⚽")
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # --- TITOLO ---
-st.title("💎 Dashboard Analisi Calcio V39 (Full)")
-st.markdown("**Analisi Tattica, Previsioni, Money Management & Ritmi di Gioco**")
+st.title("💎 Dashboard Analisi Calcio V41 (Full)")
+st.markdown("**Statistiche, Poisson, ELO, Ritmi di Gioco & Money Management**")
 st.divider()
 
 # ==========================================
@@ -25,7 +25,7 @@ with st.sidebar:
     st.header("📂 1. Dati")
     uploaded_file = st.file_uploader("Carica file (CSV/Excel)", type=['csv', 'xlsx'])
     
-    default_file = 'eng_tot_1.csv'
+    default_file = 'eng_tot_1.csv' # O il nome che hai su GitHub
     file_to_use = uploaded_file if uploaded_file else (default_file if os.path.exists(default_file) else None)
 
     if file_to_use is None:
@@ -34,9 +34,9 @@ with st.sidebar:
 
     st.divider()
     
-    # SEZIONE QUOTE (MONEY MANAGEMENT)
-    st.header("💰 2. Quote Bookmaker")
-    st.caption("Inserisci le quote per calcolare il valore:")
+    # SEZIONE QUOTE BOOKMAKER
+    st.header("💰 2. Quote & Filtri")
+    st.caption("Inserisci le quote reali:")
     
     col_b1, col_b2, col_b3 = st.columns(3)
     q_1 = col_b1.number_input("1", value=1.00, step=0.01, format="%.2f")
@@ -46,9 +46,10 @@ with st.sidebar:
     col_bu1, col_bu2 = st.columns(2)
     q_over25 = col_bu1.number_input("Over 2.5", value=1.00, step=0.01, format="%.2f")
     q_under25 = col_bu2.number_input("Under 2.5", value=1.00, step=0.01, format="%.2f")
-    
+
     st.divider()
     w_cassa = st.number_input("Cassa Totale (€)", value=1000.0, step=10.0)
+    w_soglia_trappola = st.slider("Soglia Allarme Trappola (%)", 10, 100, 30, 5)
 
 @st.cache_data
 def load_data(file_input, is_path=False):
@@ -68,6 +69,7 @@ def load_data(file_input, is_path=False):
                 file_input.seek(0)
                 df = pd.read_excel(file_input, header=None)
 
+        # Header e Pulizia
         header = df.iloc[0].astype(str).str.strip().str.upper().tolist()
         seen = {}
         unique_header = []
@@ -81,20 +83,24 @@ def load_data(file_input, is_path=False):
         df = df.iloc[1:].copy()
         df.columns = unique_header
         
+        # Mappatura Completa (incluso ELO)
         col_map = {
             'GOALMINH': ['GOALMINH', 'GOALMINCASA', 'MINUTI_CASA', 'GOALSH'],
             'GOALMINA': ['GOALMINA', 'GOALMINOSPITE', 'MINUTI_OSPITE', 'GOALSA'],
             'LEGA': ['LEGA', 'LEAGUE', 'DIVISION'],
             'PAESE': ['PAESE', 'COUNTRY'],
             'CASA': ['CASA', 'HOME', 'TXTECHIPA1'],
-            'OSPITE': ['OSPITE', 'AWAY', 'TXTECHIPA2']
+            'OSPITE': ['OSPITE', 'AWAY', 'TXTECHIPA2'],
+            'ELO_H': ['ELOHOMEO', 'ELO_HOME', 'ELO1'],
+            'ELO_A': ['ELOAWAYO', 'ELO_AWAY', 'ELO2']
         }
         
         for target, candidates in col_map.items():
             if target not in df.columns:
                 for candidate in candidates:
-                    if candidate in df.columns:
-                        df.rename(columns={candidate: target}, inplace=True)
+                    found = next((c for c in df.columns if c == candidate), None)
+                    if found:
+                        df.rename(columns={found: target}, inplace=True)
                         break
         
         for c in ['PAESE', 'LEGA', 'CASA', 'OSPITE']:
@@ -118,6 +124,9 @@ if df.empty:
 
 st.sidebar.success(f"✅ {len(df)} righe caricate")
 
+# Check ELO
+has_elo = 'ELO_H' in df.columns and 'ELO_A' in df.columns
+
 # ==========================================
 # 2. SELEZIONE MATCH
 # ==========================================
@@ -136,13 +145,12 @@ with col3: sel_away = st.selectbox("✈️ Ospite", teams, index=1 if len(teams)
 # ==========================================
 if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
     st.divider()
-    st.subheader(f"⚔️ {sel_home} vs {sel_away}")
     
     intervals = ['0-15', '16-30', '31-45', '46-60', '61-75', '76-90']
     
     def get_minutes(val):
         if pd.isna(val): return []
-        s = str(val).replace(',', '.').replace(';', ' ').replace('"', '').replace("'", "")
+        s = str(val).replace(',', ' ').replace(';', ' ').replace('.', ' ').replace('"', '').replace("'", "")
         nums = re.findall(r"[-+]?\d*\.\d+|\d+", s)
         res = []
         for x in nums:
@@ -160,19 +168,27 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
     goals_a = {'FT': 0, 'HT': 0, 'S_FT': 0, 'S_HT': 0}
     match_h, match_a = 0, 0
     
-    # Dati per KM (minuti 1° gol)
+    # Dati per KM
     times_h, times_a, times_league = [], [], []
     
-    # Dati per Heatmap (tutti i gol)
+    # Dati per Heatmap
     stats_match = {
         sel_home: {'F': {i:0 for i in intervals}, 'S': {i:0 for i in intervals}},
         sel_away: {'F': {i:0 for i in intervals}, 'S': {i:0 for i in intervals}}
     }
     
+    # Dati Elo
+    elo_h_val = 1500; elo_a_val = 1500
+
     for _, row in df_league.iterrows():
         h, a = row['CASA'], row['OSPITE']
         min_h = get_minutes(row.get(c_h))
         min_a = get_minutes(row.get(c_a))
+        
+        # Recupero Elo
+        if has_elo:
+            if h == sel_home: elo_h_val = float(row['ELO_H'])
+            if a == sel_away: elo_a_val = float(row['ELO_A'])
         
         # Media Lega (1° gol)
         if min_h: times_league.append(min(min_h))
@@ -239,24 +255,20 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
         p1 = np.sum(np.tril(probs, -1))
         px = np.sum(np.diag(probs))
         p2 = np.sum(np.triu(probs, 1))
-        return p1, px, p2, probs
+        pu25 = 0
+        for i in range(6):
+            for j in range(6):
+                if i+j <= 2: pu25 += probs[i][j]
+        return p1, px, p2, pu25, probs
 
-    p1, px, p2, matrix_ft = calc_probs(exp_h, exp_a)
-    _, _, _, matrix_ht = calc_probs(exp_h_ht, exp_a_ht)
+    p1, px, p2, pu25, matrix_probs = calc_probs(exp_h, exp_a)
     
-    # O/U 2.5 FT
-    pu25 = 0
-    for i in range(6):
-        for j in range(6):
-            if i+j <= 2: pu25 += matrix_ft[i][j]
-    po25 = 1 - pu25
-
-    # HT Specifics
-    prob_00_ht = matrix_ht[0][0]
-    prob_u15_ht = matrix_ht[0][0] + matrix_ht[1][0] + matrix_ht[0][1]
+    # Probabilità HT
+    prob_00_ht = poisson.pmf(0, exp_h_ht) * poisson.pmf(0, exp_a_ht)
+    prob_u15_ht = prob_00_ht + (poisson.pmf(1, exp_h_ht) * poisson.pmf(0, exp_a_ht)) + (poisson.pmf(0, exp_h_ht) * poisson.pmf(1, exp_a_ht))
 
     def to_odd(p): return 1/p if p > 0 else 99.00
-    
+
     # Kelly Criterion
     def calc_kelly(prob, quota, bankroll):
         if prob <= 0 or quota <= 1: return 0, 0
@@ -265,107 +277,116 @@ if st.button("🚀 AVVIA ANALISI COMPLETA", type="primary"):
         stake_pct = max(0, f * 0.3) # Kelly 30%
         return stake_pct * 100, bankroll * stake_pct
 
-    # --- DISPLAY ANALISI VALORE ---
-    def show_card(title, prob, quote_book):
-        odd_real = to_odd(prob)
-        valore = (prob * quote_book) - 1
-        pct, eur = calc_kelly(prob, quote_book, w_cassa)
-        
-        color = "green" if valore > 0 else "red"
-        icon = "✅ VALUE" if valore > 0 else "❌ NO"
-        
-        st.markdown(f"""
-        <div style="border:1px solid #444; padding:15px; border-radius:8px; margin-bottom:10px;">
-            <h4 style="margin:0;">{title}</h4>
-            <hr style="margin:5px 0;">
-            <div>Prob. Reale: <b>{prob*100:.1f}%</b> (Q. {odd_real:.2f})</div>
-            <div>Quota Book: <b>{quote_book:.2f}</b></div>
-            <div style="color:{color}; font-weight:bold; margin-top:5px;">
-                {icon} (ROI {valore*100:.1f}%)
-            </div>
-            {f"<div style='color:#00FF00'>💰 Puntata: € {eur:.2f}</div>" if valore > 0 else ""}
-        </div>
-        """, unsafe_allow_html=True)
+    # --- VISUALIZZAZIONE ---
 
-    st.subheader("📊 Analisi Valore (Money Management)")
+    # 1. Statistiche Medie
+    c1, c2 = st.columns(2)
+    with c1:
+        st.info(f"**🏠 {sel_home}** ({match_h} match)\n\n1°T: {avg_h_ht:.2f} F / {avg_h_conc_ht:.2f} S\n\nFIN: {avg_h_ft:.2f} F / {avg_h_conc:.2f} S")
+    with c2:
+        st.warning(f"**✈️ {sel_away}** ({match_a} match)\n\n1°T: {avg_a_ht:.2f} F / {avg_a_conc_ht:.2f} S\n\nFIN: {avg_a_ft:.2f} F / {avg_a_conc:.2f} S")
+
+    # 2. Analisi Valore & Money Management
+    st.subheader("💰 Caccia al Valore")
+    quotes = {'1': q_1, 'X': q_x, '2': q_2, 'O 2.5': q_over25, 'U 2.5': q_under25}
+    probs_real = {'1': p1, 'X': px, '2': p2, 'O 2.5': 1-pu25, 'U 2.5': pu25}
     
-    col_a, col_b, col_c = st.columns(3)
-    with col_a: show_card(f"Vittoria {sel_home} (1)", p1, q_1)
-    with col_b: show_card("Pareggio (X)", px, q_x)
-    with col_c: show_card(f"Vittoria {sel_away} (2)", p2, q_2)
-    
-    col_d, col_e = st.columns(2)
-    with col_d: show_card("Over 2.5 FT", po25, q_over25)
-    with col_e: show_card("Under 2.5 FT", pu25, q_under25)
+    cols = st.columns(3)
+    for i, (segno, quota) in enumerate(quotes.items()):
+        if quota > 1.0:
+            prob = probs_real.get(segno, 0)
+            valore = (prob * quota) - 1
+            
+            # Filtro Trappola
+            fair = to_odd(prob)
+            diff_pct = (quota - fair) / fair if fair > 0 else 0
+            trappola = diff_pct > (w_soglia_trappola / 100.0)
+            
+            with cols[i % 3]:
+                color = "green" if (valore > 0 and not trappola) else "red"
+                icon = "✅" if (valore > 0 and not trappola) else "⚠️" if trappola else "❌"
+                msg = "VALUE" if (valore > 0 and not trappola) else "TRAPPOLA" if trappola else "NO VALUE"
+                
+                st.markdown(f"""
+                <div style="border:1px solid #444; padding:10px; border-radius:5px; margin-bottom:5px;">
+                    <strong>{segno}</strong> (Q: {quota})<br>
+                    Fair Odd: <b>{fair:.2f}</b><br>
+                    <span style="color:{color}; font-weight:bold;">{icon} {msg}</span>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if valore > 0 and not trappola:
+                    pct, eur = calc_kelly(prob, quota, w_cassa)
+                    st.caption(f"Puntata: € {eur:.2f} ({pct:.1f}%)")
+
+    # 3. Probabilità HT
+    st.write("---")
+    c_ht1, c_ht2 = st.columns(2)
+    c_ht1.metric("Prob. 0-0 HT", f"{prob_00_ht*100:.1f}%", f"Fair: @{to_odd(prob_00_ht):.2f}")
+    c_ht2.metric("Prob. U 1.5 HT", f"{prob_u15_ht*100:.1f}%", f"Fair: @{to_odd(prob_u15_ht):.2f}")
+
+    # 4. ELO Analysis (se disponibile)
+    if has_elo:
+        st.subheader("👑 Analisi ELO")
+        e1, e2, e3 = st.columns(3)
+        e1.metric(f"Elo {sel_home}", int(elo_h_val))
+        e2.metric(f"Elo {sel_away}", int(elo_a_val))
+        diff_elo = (elo_h_val + 100) - elo_a_val # +100 Home Adv
+        prob_elo = 1 / (1 + 10 ** (-diff_elo / 400))
+        e3.metric("Prob. ELO Casa", f"{prob_elo*100:.1f}%", f"Fair: @{to_odd(prob_elo):.2f}")
 
     st.divider()
 
-    # --- DISPLAY STATS ---
-    c1, c2 = st.columns(2)
-    with c1:
-        st.info(f"**🏠 {sel_home}** ({match_h} match)\n\n"
-                f"**1°T:** {avg_h_ht:.2f} F | {avg_h_conc_ht:.2f} S\n\n"
-                f"**FIN:** {avg_h_ft:.2f} F | {avg_h_conc:.2f} S")
-        # Minuto 1° Gol
-        if times_h:
-             st.write(f"⏱️ Minuto medio 1° gol: **{int(np.mean(times_h))}'**")
-
-    with c2:
-        st.warning(f"**✈️ {sel_away}** ({match_a} match)\n\n"
-                 f"**1°T:** {avg_a_ht:.2f} F | {avg_a_conc_ht:.2f} S\n\n"
-                 f"**FIN:** {avg_a_ft:.2f} F | {avg_a_conc:.2f} S")
-        if times_a:
-             st.write(f"⏱️ Minuto medio 1° gol: **{int(np.mean(times_a))}'**")
-
-    st.write(f"**Speciale 1° Tempo:** 0-0 @{to_odd(prob_00_ht):.2f} ({prob_00_ht*100:.1f}%) | U1.5 @{to_odd(prob_u15_ht):.2f} ({prob_u15_ht*100:.1f}%)")
-
     # --- GRAFICI ---
-    tab1, tab2, tab3 = st.tabs(["📉 Ritmo Gol (KM)", "⚽ Heatmap Fatti", "🛡️ Heatmap Subiti"])
+    tab1, tab2, tab3 = st.tabs(["📉 Ritmo Gol (KM)", "⚽ Heatmap Densità", "🎯 Poisson Matrix"])
 
     with tab1:
         fig, ax = plt.subplots(figsize=(10, 5))
         kmf = KaplanMeierFitter()
         
-        has_data = False
-        if times_h:
-            kmf.fit(times_h, label=f'{sel_home} (1° Gol)')
+        if times_h and times_a:
+            kmf.fit(times_h, label=f'{sel_home}')
             kmf.plot_survival_function(ax=ax, ci_show=False, linewidth=3, color='blue')
-            has_data = True
-        if times_a:
-            kmf.fit(times_a, label=f'{sel_away} (1° Gol)')
+            kmf.fit(times_a, label=f'{sel_away}')
             kmf.plot_survival_function(ax=ax, ci_show=False, linewidth=3, color='red')
-            has_data = True
-        if times_league:
-            kmf.fit(times_league, label='Media Campionato')
-            kmf.plot_survival_function(ax=ax, ci_show=False, linewidth=2, color='gray', linestyle='--')
+            
+            if len(times_league) > 10:
+                kmf.fit(times_league, label='Media Lega')
+                kmf.plot_survival_function(ax=ax, ci_show=False, linewidth=2, color='gray', linestyle='--')
 
-        if has_data:
-            plt.title('📉 Probabilità 0-0 nel tempo (Kaplan-Meier)')
-            plt.axhline(0.5, color='green', linestyle=':', label='Mediana (50%)')
+            plt.title('Ritmo Gol (Probabilità 0-0)')
+            plt.axhline(0.5, color='green', linestyle=':', label='Mediana')
             plt.axvline(45, color='black', linestyle='--')
             plt.grid(True, alpha=0.3)
             plt.legend()
             st.pyplot(fig)
         else:
-            st.warning("Dati insufficienti per il grafico KM.")
-
-    # Heatmaps
-    rows_f = []
-    rows_s = []
-    for t in [sel_home, sel_away]:
-        d = stats_match[t]
-        rows_f.append({**{'SQUADRA': t}, **d['F']})
-        rows_s.append({**{'SQUADRA': t}, **d['S']})
-    
-    df_f = pd.DataFrame(rows_f).set_index('SQUADRA')
-    df_s = pd.DataFrame(rows_s).set_index('SQUADRA')
+            st.warning("Dati insufficienti per KM.")
 
     with tab2:
-        fig, ax = plt.subplots(figsize=(10, 2.5))
-        sns.heatmap(df_f[intervals], annot=True, cmap="Greens", fmt="d", cbar=False, ax=ax)
+        # Heatmap H2H
+        rows_f = []
+        rows_s = []
+        for t in [sel_home, sel_away]:
+            d = stats_match[t]
+            rows_f.append({**{'SQUADRA': t}, **d['F']})
+            rows_s.append({**{'SQUADRA': t}, **d['S']})
+        
+        df_f = pd.DataFrame(rows_f).set_index('SQUADRA')
+        df_s = pd.DataFrame(rows_s).set_index('SQUADRA')
+
+        fig, axes = plt.subplots(2, 1, figsize=(10, 6))
+        sns.heatmap(df_f[intervals], annot=True, cmap="Greens", fmt="d", cbar=False, ax=axes[0])
+        axes[0].set_title('Densità Gol FATTI')
+        sns.heatmap(df_s[intervals], annot=True, cmap="Reds", fmt="d", cbar=False, ax=axes[1])
+        axes[1].set_title('Densità Gol SUBITI')
+        plt.tight_layout()
         st.pyplot(fig)
 
     with tab3:
-        fig, ax = plt.subplots(figsize=(10, 2.5))
-        sns.heatmap(df_s[intervals], annot=True, cmap="Reds", fmt="d", cbar=False, ax=ax)
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sns.heatmap(matrix_probs, annot=True, fmt=".1%", cmap="Blues", cbar=False, ax=ax)
+        ax.set_xlabel(f"Gol {sel_away}")
+        ax.set_ylabel(f"Gol {sel_home}")
+        ax.set_title("Probabilità Risultato Esatto")
         st.pyplot(fig)
